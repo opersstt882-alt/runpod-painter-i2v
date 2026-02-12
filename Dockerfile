@@ -1,6 +1,6 @@
 # PainterI2V + LightX2V Worker for RunPod Serverless
 # Small image - models download at first boot, then cached by Flash Boot
-FROM runpod/worker-comfyui:latest-base
+FROM runpod/worker-comfyui:5.7.1-base
 
 # Install custom nodes via ComfyUI registry
 RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite
