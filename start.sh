@@ -1,6 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # PainterI2V Worker - Download models if needed, then start ComfyUI worker
-set -e
 
 MODELS_DIR="/comfyui/models"
 HF_BASE="https://huggingface.co"
@@ -12,6 +11,11 @@ download_if_missing() {
     if [ ! -f "$dest" ]; then
         echo "[model-dl] Downloading: $(basename $dest)"
         wget -q --show-progress -O "$dest" "$url"
+        if [ $? -ne 0 ]; then
+            echo "[model-dl] ERROR downloading $(basename $dest), retrying..."
+            rm -f "$dest"
+            wget -q --show-progress -O "$dest" "$url"
+        fi
         echo "[model-dl] Done: $(basename $dest) ($(du -h "$dest" | cut -f1))"
     else
         echo "[model-dl] Already exists: $(basename $dest) ($(du -h "$dest" | cut -f1))"
@@ -58,33 +62,27 @@ else
     echo "[model-dl] Models already present, skipping download."
 fi
 
-# ===== Start the original ComfyUI worker =====
-# Replicate the logic from the base image's /start.sh
+# ===== Start the ComfyUI worker (matching base image logic) =====
 
-# Find and use tcmalloc for better memory management
-TCMALLOC="$(ldconfig -p 2>/dev/null | grep -Po "libtcmalloc.so.\d" | head -n 1)"
-if [ -n "$TCMALLOC" ]; then
-    echo "[start] Using tcmalloc: $TCMALLOC"
-    export LD_PRELOAD="$TCMALLOC"
-fi
+# Use libtcmalloc for better memory management
+TCMALLOC="$(ldconfig -p | grep -Po "libtcmalloc.so.\d" | head -n 1)"
+export LD_PRELOAD="${TCMALLOC}"
 
-# Set ComfyUI-Manager to offline mode
-export COMFYUI_MANAGER_MODE="offline"
+# Ensure ComfyUI-Manager runs in offline network mode
+comfy-manager-set-mode offline || echo "worker-comfyui - Could not set ComfyUI-Manager network_mode" >&2
 
-# Logging level
-COMFY_LOG_LEVEL=${COMFY_LOG_LEVEL:-DEBUG}
+echo "worker-comfyui: Starting ComfyUI"
 
-echo "[start] Starting ComfyUI worker..."
+: "${COMFY_LOG_LEVEL:=DEBUG}"
 
-if [ "${SERVE_API_LOCALLY}" = "true" ]; then
-    echo "[start] Local API mode enabled"
-    python3 /comfyui/main.py --disable-auto-launch --disable-metadata --listen \
-        --log-level "$COMFY_LOG_LEVEL" 2>&1 &
+if [ "$SERVE_API_LOCALLY" == "true" ]; then
+    python -u /comfyui/main.py --disable-auto-launch --disable-metadata --listen --verbose "${COMFY_LOG_LEVEL}" --log-stdout &
 
-    python3 -u /rp_handler.py --rp_serve_api --rp_api_host=0.0.0.0
+    echo "worker-comfyui: Starting RunPod Handler"
+    python -u /handler.py --rp_serve_api --rp_api_host=0.0.0.0
 else
-    python3 /comfyui/main.py --disable-auto-launch --disable-metadata \
-        --log-level "$COMFY_LOG_LEVEL" 2>&1 &
+    python -u /comfyui/main.py --disable-auto-launch --disable-metadata --verbose "${COMFY_LOG_LEVEL}" --log-stdout &
 
-    python3 -u /rp_handler.py
+    echo "worker-comfyui: Starting RunPod Handler"
+    python -u /handler.py
 fi
